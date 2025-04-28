@@ -1,6 +1,6 @@
 use crate::{
     codecs::{Encoder, Transformer},
-    event::{Event, EventFinalizers, Finalizable},
+    event::{Event, EventFinalizers, Finalizable, EventRef},
     http::{Auth, HttpClient, HttpError},
     sinks::{
         prelude::*,
@@ -125,7 +125,7 @@ fn prepare_log_ingester_url(
 }
 
 impl HttpServiceRequestBuilder<PartitionKey> for GreptimeDBLogsHttpRequestBuilder {
-    fn build(&self, mut request: HttpRequest<PartitionKey>) -> Result<Request<Bytes>, Error> {
+    fn build(&self, mut request: HttpRequest<PartitionKey>, _log: Option<EventRef<'_>>) -> Result<Request<Bytes>, Error> {
         let metadata = request.get_additional_metadata();
         let table = metadata.table.clone();
         let db = metadata.dbname.clone();

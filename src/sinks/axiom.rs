@@ -113,6 +113,7 @@ impl SinkConfig for AxiomConfig {
         //
         let http_sink_config = HttpSinkConfig {
             uri: self.build_endpoint().try_into()?,
+            endpoints: vec![self.build_endpoint()],
             compression: self.compression,
             auth: Some(HttpAuthConfig::Bearer {
                 token: self.token.clone(),

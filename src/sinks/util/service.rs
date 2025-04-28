@@ -305,6 +305,13 @@ impl TowerRequestSettings {
         BatchSink::new(service, batch, batch_timeout)
     }
 
+    pub fn health_config(self) -> HealthConfig {
+        HealthConfig {
+            retry_initial_backoff_secs: self.retry_initial_backoff.as_secs(),
+            retry_max_duration_secs: self.retry_max_duration,
+        }
+    }
+
     /// Distributes requests to services [(Endpoint, service, healthcheck)]
     ///
     /// [BufferLayer] suggests that the `buffer_bound` should be at least equal to

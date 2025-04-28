@@ -3,12 +3,12 @@
 use bytes::Bytes;
 use http::{
     header::{CONTENT_ENCODING, CONTENT_TYPE},
-    HeaderName, HeaderValue, Method, Request, Uri,
+    HeaderName, Method, Request, Uri,
 };
 use indexmap::IndexMap;
 
 use crate::{
-    http::Auth,
+    http::{Auth, HeaderValue},
     sinks::{
         util::{
             http::{HttpRequest, HttpServiceRequestBuilder},
@@ -18,6 +18,10 @@ use crate::{
     },
 };
 use snafu::ResultExt;
+
+use crate::{
+    event::{EventRef},
+};
 
 use super::config::HttpMethod;
 
@@ -53,7 +57,7 @@ impl HttpSinkRequestBuilder {
 }
 
 impl HttpServiceRequestBuilder<()> for HttpSinkRequestBuilder {
-    fn build(&self, mut request: HttpRequest<()>) -> Result<Request<Bytes>, crate::Error> {
+    fn build(&self, mut request: HttpRequest<()>, log: Option<EventRef<'_>>) -> Result<Request<Bytes>, crate::Error> {
         let method: Method = self.method.into();
         let uri: Uri = self.uri.uri.clone();
         let mut builder = Request::builder().method(method).uri(uri);
@@ -72,7 +76,11 @@ impl HttpServiceRequestBuilder<()> for HttpSinkRequestBuilder {
             .expect("Failed to access headers in http::Request builder- builder has errors.");
 
         for (header, value) in self.headers.iter() {
-            headers.insert(header, value.clone());
+            let val = match value.clone().as_value(header, log) {
+                Ok(v) => v,
+                Err(e) => return Err(e),
+            };
+            headers.insert(header, val);
         }
 
         // The request building should not have errors at this point

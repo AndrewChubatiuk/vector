@@ -38,6 +38,7 @@ impl Default for Protocol {
                 Transformer::default(),
             ),
             uri: Default::default(),
+            endpoints: Default::default(),
             method: HttpMethod::Post,
             auth: Default::default(),
             headers: Default::default(),

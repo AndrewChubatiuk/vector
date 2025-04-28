@@ -4,9 +4,12 @@ use bytes::Bytes;
 use http::{Request, Uri};
 use vector_lib::sensitive_string::SensitiveString;
 
-use crate::sinks::{
-    util::http::{HttpRequest, HttpServiceRequestBuilder},
-    HTTPRequestBuilderSnafu,
+use crate::{
+    event::EventRef,
+    sinks::{
+        util::http::{HttpRequest, HttpServiceRequestBuilder},
+        HTTPRequestBuilderSnafu,
+    },
 };
 use snafu::ResultExt;
 
@@ -19,7 +22,7 @@ pub(super) struct KeepSvcRequestBuilder {
 }
 
 impl HttpServiceRequestBuilder<()> for KeepSvcRequestBuilder {
-    fn build(&self, mut request: HttpRequest<()>) -> Result<Request<Bytes>, crate::Error> {
+    fn build(&self, mut request: HttpRequest<()>, _log: Option<EventRef<'_>>) -> Result<Request<Bytes>, crate::Error> {
         let builder =
             Request::post(&self.uri).header(HTTP_HEADER_KEEP_API_KEY, self.api_key.inner());
 

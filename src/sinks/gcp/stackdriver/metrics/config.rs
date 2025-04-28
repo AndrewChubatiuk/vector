@@ -8,6 +8,7 @@ use super::{
 };
 use crate::{
     gcp::{GcpAuthConfig, GcpAuthenticator},
+    event::EventRef,
     http::HttpClient,
     sinks::{
         gcp,
@@ -160,7 +161,7 @@ pub(super) struct StackdriverMetricsServiceRequestBuilder {
 }
 
 impl HttpServiceRequestBuilder<()> for StackdriverMetricsServiceRequestBuilder {
-    fn build(&self, mut request: HttpRequest<()>) -> Result<Request<Bytes>, crate::Error> {
+    fn build(&self, mut request: HttpRequest<()>, _log: Option<EventRef<'_>>) -> Result<Request<Bytes>, crate::Error> {
         let builder = Request::post(self.uri.clone()).header(CONTENT_TYPE, "application/json");
 
         let mut request = builder

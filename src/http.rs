@@ -2,7 +2,7 @@
 use futures::future::BoxFuture;
 use headers::{Authorization, HeaderMapExt};
 use http::{
-    header::HeaderValue, request::Builder, uri::InvalidUri, HeaderMap, Request, Response, Uri,
+    request::Builder, uri::InvalidUri, HeaderMap, Request, Response, Uri,
     Version,
 };
 use hyper::{
@@ -34,7 +34,8 @@ use vector_lib::sensitive_string::SensitiveString;
 
 use crate::{
     config::ProxyConfig,
-    internal_events::{http_client, HttpServerRequestReceived, HttpServerResponseSent},
+    event::{EventRef},
+    internal_events::{http_client, HttpServerRequestReceived, HttpServerResponseSent, TemplateRenderingError},
     tls::{tls_connector_builder, MaybeTlsSettings, TlsError},
 };
 
@@ -75,7 +76,7 @@ type HttpProxyConnector = ProxyConnector<HttpsConnector<HttpConnector>>;
 
 pub struct HttpClient<B = Body> {
     client: Client<HttpProxyConnector, B>,
-    user_agent: HeaderValue,
+    user_agent: http::header::HeaderValue,
     proxy_connector: HttpProxyConnector,
 }
 
@@ -102,7 +103,7 @@ where
 
         let app_name = crate::get_app_name();
         let version = crate::get_version();
-        let user_agent = HeaderValue::from_str(&format!("{}/{}", app_name, version))
+        let user_agent = http::header::HeaderValue::from_str(&format!("{}/{}", app_name, version))
             .expect("Invalid header value for user-agent!");
 
         Ok(HttpClient {
@@ -209,7 +210,7 @@ pub fn build_tls_connector(
     Ok(https)
 }
 
-fn default_request_headers<B>(request: &mut Request<B>, user_agent: &HeaderValue) {
+fn default_request_headers<B>(request: &mut Request<B>, user_agent: &http::header::HeaderValue) {
     if !request.headers().contains_key("User-Agent") {
         request
             .headers_mut()
@@ -221,7 +222,7 @@ fn default_request_headers<B>(request: &mut Request<B>, user_agent: &HeaderValue
         // https://github.com/vectordotdev/vector/issues/5440
         request
             .headers_mut()
-            .insert("Accept-Encoding", HeaderValue::from_static("identity"));
+            .insert("Accept-Encoding", http::header::HeaderValue::from_static("identity"));
     }
 }
 
@@ -554,6 +555,35 @@ where
     }
 }
 
+/// Configuration of the header value for HTTP requests.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum HeaderValue {
+    /// Header plaintext value
+    Plain(http::header::HeaderValue),
+    /// Header template value
+    Template(crate::template::Template),
+}
+
+impl HeaderValue {
+    pub fn as_value(self, name: &http::header::HeaderName, log: Option<EventRef<'_>>) -> Result<http::header::HeaderValue, crate::Error> {
+        match self {
+            HeaderValue::Plain(v) => Ok(v),
+            HeaderValue::Template(v) => Ok(http::header::HeaderValue::from_str(v
+                .render_string(log.unwrap())
+                .map_err(|error| {
+                    emit!(TemplateRenderingError {
+                        error,
+                        field: Some(format!("headers.{}", name.as_str()).as_str()),
+                        drop_event: true,
+                    });
+                })
+                .ok()
+                .unwrap()
+                .as_str()).unwrap()),
+        }
+    }
+}
+
 /// Configuration of the query parameter value for HTTP requests.
 #[configurable_component]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -621,12 +651,12 @@ mod tests {
 
     #[test]
     fn test_default_request_headers_defaults() {
-        let user_agent = HeaderValue::from_static("vector");
+        let user_agent = http::header::HeaderValue::from_static("vector");
         let mut request = Request::post("http://example.com").body(()).unwrap();
         default_request_headers(&mut request, &user_agent);
         assert_eq!(
             request.headers().get("Accept-Encoding"),
-            Some(&HeaderValue::from_static("identity")),
+            Some(&http::header::HeaderValue::from_static("identity")),
         );
         assert_eq!(request.headers().get("User-Agent"), Some(&user_agent));
     }
@@ -638,14 +668,14 @@ mod tests {
             .header("User-Agent", "foo")
             .body(())
             .unwrap();
-        default_request_headers(&mut request, &HeaderValue::from_static("vector"));
+        default_request_headers(&mut request, &http::header::HeaderValue::from_static("vector"));
         assert_eq!(
             request.headers().get("Accept-Encoding"),
-            Some(&HeaderValue::from_static("gzip")),
+            Some(&http::header::HeaderValue::from_static("gzip")),
         );
         assert_eq!(
             request.headers().get("User-Agent"),
-            Some(&HeaderValue::from_static("foo"))
+            Some(&http::header::HeaderValue::from_static("foo"))
         );
     }
 
@@ -723,7 +753,7 @@ mod tests {
         let response = service.call(req).await.unwrap();
         assert_eq!(
             response.headers().get("Connection"),
-            Some(&HeaderValue::from_static("close"))
+            Some(&http::header::HeaderValue::from_static("close"))
         );
     }
 
@@ -794,7 +824,7 @@ mod tests {
         let response = service.call(req).await.unwrap();
         assert_eq!(
             response.headers().get("Connection"),
-            Some(&HeaderValue::from_static("close"))
+            Some(&http::header::HeaderValue::from_static("close"))
         );
     }
 
@@ -852,7 +882,7 @@ mod tests {
         let response = client.send(req).await.unwrap();
         assert_eq!(
             response.headers().get("Connection"),
-            Some(&HeaderValue::from_static("close")),
+            Some(&http::header::HeaderValue::from_static("close")),
         );
 
         // The next request should establish a new connection.

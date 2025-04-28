@@ -1,9 +1,14 @@
 //! Configuration for the `http` sink.
 
-use http::{header::AUTHORIZATION, HeaderName, HeaderValue, Method, Request, StatusCode};
+use http::{header::AUTHORIZATION, HeaderName, Method, Request, StatusCode};
 use hyper::Body;
 use indexmap::IndexMap;
-use std::path::PathBuf;
+
+use std::{
+    path::PathBuf,
+    str::FromStr,
+};
+
 use vector_lib::codecs::{
     encoding::{Framer, Serializer},
     CharacterDelimitedEncoder,
@@ -11,12 +16,12 @@ use vector_lib::codecs::{
 
 use crate::{
     codecs::{EncodingConfigWithFraming, SinkType},
-    http::{Auth, HttpClient, MaybeAuth},
+    http::{Auth, HeaderValue, HttpClient, MaybeAuth},
     sinks::{
         prelude::*,
         util::{
-            http::{http_response_retry_logic, HttpService, RequestConfig},
-            RealtimeSizeBasedDefaultBatchSettings, UriSerde,
+            http::{http_response_retry_logic, HttpService, RequestConfig, HttpResponse},
+            RealtimeSizeBasedDefaultBatchSettings, UriSerde, service::HealthLogic,
         },
     },
 };
@@ -30,6 +35,22 @@ const CONTENT_TYPE_TEXT: &str = "text/plain";
 const CONTENT_TYPE_NDJSON: &str = "application/x-ndjson";
 const CONTENT_TYPE_JSON: &str = "application/json";
 
+#[derive(Clone)]
+pub struct HttpHealthLogic;
+
+
+impl HealthLogic for HttpHealthLogic {
+    type Error = crate::Error;
+    type Response = HttpResponse;
+
+    fn is_healthy(&self, response: &Result<Self::Response, Self::Error>) -> Option<bool> {
+        match response {
+            Ok(r) => Some(r.http_response.status().is_success()),
+            Err(_e) => Some(false),
+        }
+    }
+}
+
 /// Configuration for the `http` sink.
 #[configurable_component(sink("http", "Deliver observability event data to an HTTP server."))]
 #[derive(Clone, Debug)]
@@ -38,8 +59,17 @@ pub struct HttpSinkConfig {
     /// The full URI to make HTTP requests to.
     ///
     /// This should include the protocol and host, but can also include the port, path, and any other valid part of a URI.
+    #[configurable(metadata(depracated = "This options has been deprecated, use `endpoints` instead."))]
     #[configurable(metadata(docs::examples = "https://10.22.212.22:9000/endpoint"))]
-    pub uri: UriSerde,
+    pub uri: Option<String>,
+
+    /// A list of endpoints to send logs to.
+    ///
+    /// The endpoint must contain an HTTP scheme, and may specify a
+    /// hostname or IP address and port.
+    #[configurable(metadata(docs::examples = "http://10.24.32.122:9000/endpoint"))]
+    #[configurable(metadata(docs::examples = "https://example.com/example"))]
+    pub endpoints: Vec<String>,
 
     /// The HTTP method to use when making the request.
     #[serde(default)]
@@ -166,7 +196,7 @@ impl HttpSinkConfig {
 impl GenerateConfig for HttpSinkConfig {
     fn generate_config() -> toml::Value {
         toml::from_str(
-            r#"uri = "https://10.22.212.22:9000/endpoint"
+            r#"endpoints = ["https://10.22.212.22:9000/endpoint"]
             encoding.codec = "json""#,
         )
         .unwrap()
@@ -229,6 +259,18 @@ pub(super) fn validate_payload_wrapper(
 #[typetag::serde(name = "http")]
 impl SinkConfig for HttpSinkConfig {
     async fn build(&self, cx: SinkContext) -> crate::Result<(VectorSink, Healthcheck)> {
+        let endpoints = self.endpoints.clone();
+        if let Some(uri) = self.uri {
+            warn!(message = "DEPRECATION, use of deprecated option `uri`. Please use `endpoints` option instead.");
+            if endpoints.is_empty() {
+                endpoints.push(uri);
+            } else {
+                return Err("It's not allowed to use both `uri` and `endpoints` params".into());
+            }
+        } else if endpoints.is_empty() {
+            return Err("`endpoints` parameter is not set".into());
+        }
+
         let batch_settings = self.batch.validate()?.into_batcher_settings()?;
 
         let encoder = self.build_encoder()?;
@@ -276,18 +318,35 @@ impl SinkConfig for HttpSinkConfig {
                 .to_string()
         });
 
-        let http_sink_request_builder = HttpSinkRequestBuilder::new(
-            self.uri.with_default_parts(),
-            self.method,
-            self.auth.choose_one(&self.uri.auth)?,
-            headers,
-            content_type,
-            content_encoding,
-        );
+        let services = endpoints
+            .iter()
+            .map(|e| {
+                let key = e.clone();
+                let endpoint = UriSerde::from_str(e).expect("One of endpoints is invalid.");
+                let http_sink_request_builder = HttpSinkRequestBuilder::new(
+                    endpoint.with_default_parts(),
+                    self.method,
+                    self.auth.choose_one(&endpoint.auth).unwrap(),
+                    headers,
+                    content_type,
+                    content_encoding,
+                );
 
-        let service = HttpService::new(client, http_sink_request_builder);
+                let service = HttpService::new(client, http_sink_request_builder);
+
+                (key, service)
+            })
+            .collect::<Vec<_>>();
 
         let request_limits = self.request.tower.into_settings();
+
+        let service = request_limits.distributed_service(
+            http_response_retry_logic(),
+            services,
+            request_limits.health_config(),
+            HttpHealthLogic,
+            1,
+        );
 
         let service = ServiceBuilder::new()
             .settings(request_limits, http_response_retry_logic())
@@ -329,7 +388,6 @@ mod tests {
 
     impl ValidatableComponent for HttpSinkConfig {
         fn validation_configuration() -> ValidationConfiguration {
-            use std::str::FromStr;
             use vector_lib::codecs::{JsonSerializerConfig, MetricTagValues};
             use vector_lib::config::LogNamespace;
 

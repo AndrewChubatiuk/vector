@@ -5,6 +5,7 @@ use http::{header::CONTENT_TYPE, Request, Uri};
 
 use crate::{
     gcp::GcpAuthenticator,
+    event::EventRef,
     sinks::{
         util::http::{HttpRequest, HttpServiceRequestBuilder},
         HTTPRequestBuilderSnafu,
@@ -19,7 +20,7 @@ pub(super) struct StackdriverLogsServiceRequestBuilder {
 }
 
 impl HttpServiceRequestBuilder<()> for StackdriverLogsServiceRequestBuilder {
-    fn build(&self, mut request: HttpRequest<()>) -> Result<Request<Bytes>, crate::Error> {
+    fn build(&self, mut request: HttpRequest<()>, _log: Option<EventRef<'_>>) -> Result<Request<Bytes>, crate::Error> {
         let builder = Request::post(self.uri.clone()).header(CONTENT_TYPE, "application/json");
 
         let mut request = builder

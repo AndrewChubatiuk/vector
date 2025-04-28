@@ -3,6 +3,7 @@
 use super::sink::PartitionKey;
 use crate::{
     http::{Auth, HttpError},
+    event::{EventRef},
     sinks::{
         clickhouse::config::Format,
         prelude::*,
@@ -73,6 +74,7 @@ impl HttpServiceRequestBuilder<PartitionKey> for ClickhouseServiceRequestBuilder
     fn build(
         &self,
         mut request: HttpRequest<PartitionKey>,
+        _log: Option<EventRef<'_>>,
     ) -> Result<Request<Bytes>, crate::Error> {
         let metadata = request.get_additional_metadata();
 

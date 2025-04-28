@@ -12,7 +12,7 @@ use std::{
 use bytes::{Buf, Bytes};
 use futures::{future::BoxFuture, Sink};
 use headers::HeaderName;
-use http::{header, HeaderValue, Request, Response, StatusCode};
+use http::{header, Request, Response, StatusCode};
 use hyper::{body, Body};
 use indexmap::IndexMap;
 use pin_project::pin_project;
@@ -30,8 +30,8 @@ use super::{
     TowerRequestSettings,
 };
 use crate::{
-    event::Event,
-    http::{HttpClient, HttpError},
+    event::{Event, EventRef},
+    http::{HeaderValue, HttpClient, HttpError},
     internal_events::{EndpointBytesSent, SinkRequestBuildError},
     sinks::prelude::*,
 };
@@ -599,10 +599,14 @@ pub fn validate_headers(
     for (name, value) in headers {
         let name = HeaderName::from_bytes(name.as_bytes())
             .with_context(|_| InvalidHeaderNameSnafu { name })?;
-        let value = HeaderValue::from_bytes(value.as_bytes())
-            .with_context(|_| InvalidHeaderValueSnafu { value })?;
-
-        validated_headers.insert(name, value);
+        let tmpl = Template::try_from(value.as_str()).unwrap();
+        if tmpl.is_dynamic() {
+            validated_headers.insert(name, HeaderValue::Template(tmpl));
+        } else {
+            let value = http::header::HeaderValue::from_bytes(value.as_bytes())
+                .with_context(|_| InvalidHeaderValueSnafu { value })?;
+            validated_headers.insert(name, HeaderValue::Plain(value));
+        }
     }
 
     Ok(validated_headers)
@@ -711,7 +715,7 @@ impl ItemBatchSize<Event> for HttpJsonBatchSizer {
 
 /// HTTP request builder for HTTP stream sinks using the generic `HttpService`
 pub trait HttpServiceRequestBuilder<T: Send> {
-    fn build(&self, request: HttpRequest<T>) -> Result<Request<Bytes>, crate::Error>;
+    fn build(&self, request: HttpRequest<T>, log: Option<EventRef<'_>>) -> Result<Request<Bytes>, crate::Error>;
 }
 
 /// Generic 'Service' implementation for HTTP stream sinks.
@@ -733,7 +737,7 @@ where
             let request_builder = Arc::clone(&http_request_builder);
 
             let fut: BoxFuture<'static, Result<http::Request<Bytes>, crate::Error>> =
-                Box::pin(async move { request_builder.build(req) });
+                Box::pin(async move { request_builder.build(req, None) });
 
             fut
         });

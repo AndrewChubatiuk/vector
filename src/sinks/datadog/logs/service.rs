@@ -8,7 +8,7 @@ use futures::future::BoxFuture;
 use headers::HeaderName;
 use http::{
     header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE},
-    HeaderValue, Request, Uri,
+    Request, Uri,
 };
 use hyper::Body;
 use indexmap::IndexMap;
@@ -19,7 +19,7 @@ use vector_lib::request_metadata::{GroupedCountByteSize, MetaDescriptive, Reques
 use vector_lib::stream::DriverResponse;
 
 use crate::{
-    http::HttpClient,
+    http::{HeaderValue, HttpClient},
     sinks::util::{retries::RetryLogic, Compression},
     sinks::{datadog::DatadogApiError, util::http::validate_headers},
 };
@@ -153,12 +153,14 @@ impl Service<LogApiRequest> for LogApiService {
 
         if let Some(headers) = http_request.headers_mut() {
             for (name, value) in &self.user_provided_headers {
+                let val = value.clone().as_value(name, None).expect("Unexpectedly failed to get HTTP header value");
                 // Replace rather than append to any existing header values
-                headers.insert(name, value.clone());
+                headers.insert(name, val);
             }
             // Set DD EVP headers last so that they cannot be overridden.
             for (name, value) in &self.dd_evp_headers {
-                headers.insert(name, value.clone());
+                let val = value.clone().as_value(name, None).expect("Unexpectedly failed to get HTTP header value");
+                headers.insert(name, val);
             }
         }
 

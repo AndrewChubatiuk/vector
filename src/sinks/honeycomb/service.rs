@@ -4,10 +4,13 @@ use bytes::Bytes;
 use http::{Request, Uri};
 use vector_lib::sensitive_string::SensitiveString;
 
-use crate::sinks::{
-    util::buffer::compression::Compression,
-    util::http::{HttpRequest, HttpServiceRequestBuilder},
-    HTTPRequestBuilderSnafu,
+use crate::{
+    event::{EventRef},
+    sinks::{
+        util::buffer::compression::Compression,
+        util::http::{HttpRequest, HttpServiceRequestBuilder},
+        HTTPRequestBuilderSnafu,
+    },
 };
 use snafu::ResultExt;
 
@@ -21,7 +24,7 @@ pub(super) struct HoneycombSvcRequestBuilder {
 }
 
 impl HttpServiceRequestBuilder<()> for HoneycombSvcRequestBuilder {
-    fn build(&self, mut request: HttpRequest<()>) -> Result<Request<Bytes>, crate::Error> {
+    fn build(&self, mut request: HttpRequest<()>, _log: Option<EventRef<'_>>) -> Result<Request<Bytes>, crate::Error> {
         let mut builder =
             Request::post(&self.uri).header(HTTP_HEADER_HONEYCOMB, self.api_key.inner());
 

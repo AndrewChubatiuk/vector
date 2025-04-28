@@ -264,7 +264,7 @@ async fn correct_request() {
     );
 
     let request = stackdriver_logs_service_request_builder
-        .build(http_request)
+        .build(http_request, None)
         .unwrap();
 
     let (parts, body) = request.into_parts();
